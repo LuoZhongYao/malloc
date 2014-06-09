@@ -12,11 +12,9 @@
 #include <string.h>
 #include "list.h"
 
-#define MM_BLOCK_DOUBLE_BYTE   16  /*! double word !*/
-#define MM_POOL_SIZE    16
-#define MM_HEAP_SIZE    512
+#define MM_BLOCK_DOUBLE_BYTE   (sizeof(MMBlock) >> 2)  /*! double word !*/
 #define MM_ALLOC_LG2    16  /*! 2^16 64KB !*/
-#define MM_MAX_SIZE     (50 * 1024)
+#define MM_MAX_SIZE     (26 * 1024)
 
 #define BLOCK_OFFSET(x,off) (((char *)x) + (off << 2))
 #define BLOCK_UP(x)         (((void*)x) - ((x)->adjlength << 2))
@@ -76,7 +74,7 @@ static void foreach(void){
         if(!list_empty(&mmInfo.head[i])){
             printf("%8d %2d> ",1 << i,i);
             list_for_each(pos,&mmInfo.head[i]){
-                printf("{ %p length %4d,adjlength %4d} -> ",pos,list_entry(pos,MMBlock,list)->length,list_entry(pos,MMBlock,list)->adjlength);
+                printf("{length %4d,adjlength %4d} -> ",list_entry(pos,MMBlock,list)->length,list_entry(pos,MMBlock,list)->adjlength);
                 if(!list_entry(pos,MMBlock,list)->length)
                     panic("\nBug> Invald block\n");
             }
@@ -226,7 +224,7 @@ void zFree(void *ptr){
 #include <sys/signal.h>
 #include <setjmp.h>
 #include <time.h>
-#define PS2 (1 << 10)
+#define PS2 (1 << 12)
 static volatile int running = 0;
 static jmp_buf jmp;
 static void __exit(int req){
@@ -247,7 +245,7 @@ int main(int argc,char **argv){
     running = 1;
     setjmp(jmp);
     while(running){
-        n = rand() % (PS2);
+        n = rand() % (PS2) & 0xFFE0;
         if(ptr[n]){
             zFree(ptr[n]);
             ptr[n] = NULL;
@@ -264,7 +262,7 @@ int main(int argc,char **argv){
     printf("Debug> failed : %8d success : %8d free %8d\n",nf,ns,nn);
 #ifdef  STATISTICS
     for(int i = 0;i < MM_ALLOC_LG2;i++){
-        printf("{%5d count %d,unhit %d}\n",1 << i,mmInfo.count[i],mmInfo.unhit[i]);
+        printf("{%5d count %8d,unhit %8d}\n",1 << i,mmInfo.count[i],mmInfo.unhit[i]);
     }
     printf("------------------------ Map -----------------------\n");
     foreach();
