@@ -16,9 +16,9 @@
 #define MM_ALLOC_LG2    16  /*! 2^16 64KB !*/
 #define MM_MAX_SIZE     (26 * 1024)
 
-#define BLOCK_OFFSET(x,off) (((char *)x) + (off << 2))
+#define LHEAD               (sizeof(uint32_t) >> 1)
 #define BLOCK_UP(x)         (((void*)x) - ((x)->adjlength << 2))
-#define BLOCK_DOWN(x)       (((void*)x) + ((x)->length << 2))
+#define BLOCK_DOWN(x)       ((void*)((x)->ptr + ((x)->length << 2)))
 #define BLOCK_ENTRY(x)      container_of((x),MMBlock,list)
 
 #define is_power_of_2(x)    (!((x) & (x - 1)))
@@ -90,6 +90,11 @@ static inline void update(MMBlock *block){
     down->adjlength = block->length;
 }
 
+static inline void lblock(MMBlock *block,uint16_t length){
+    block->length = length - LHEAD;
+    update(block);
+}
+
 static MMBlock *mergeup(MMBlock *block){
     MMBlock *up;
     up = BLOCK_UP(block);
@@ -120,16 +125,17 @@ static MMBlock *merge(MMBlock *block){
     block = mergedown(block);
     return block;
 }
+
 static void insert(MMBlock *block){
     int bit;
     uint16_t blen = 0,len = 0;
     MMBlock *down;
     if(!block->length) 
         panic("Error> Invalid block\n");
-    bit = bitindex(block->length);
+    bit = bitindex(block->length) - 1;
     if(!bit || bit >= 15)
         panic("Error> Beyond the scope of management,only support 0 ~ 12800,current is %d,bit is %d\n",block->length,bit);
-    blen = pow2((bit - 1));
+    blen = pow2((bit));
 
     len = block->length - blen;
     if(len >= MM_BLOCK_DOUBLE_BYTE){    /*! 如果剩下的块大于 MM_BLOCK_DOUBLE_BYTE,将它插入空闲链表 !*/
@@ -158,18 +164,19 @@ void zMInit(void){
 #else
 #error "You should realize allocate memory"
 #endif
-    block = up + 1;
-    up->length = sizeof(MMBlock) >> 2;
+    lblock(up,1);
     up->adjlength = 0;
     up->used = 1;
 
-    block->length = (MM_MAX_SIZE - 2 * sizeof(MMBlock)) >> 2;
+    block = BLOCK_DOWN(up);
     block->adjlength = sizeof(MMBlock) >> 2;
+    lblock(block,(MM_MAX_SIZE - 8) >> 2);
+    block->length = (MM_MAX_SIZE - 2 * sizeof(MMBlock)) >> 2;
 
     down = BLOCK_DOWN(block);
     down->used = 1;
-    down->length = sizeof(MMBlock) >> 2; /*! length align 4 !*/
-    update(block);
+    down->length = 0; /*! length align 4 !*/
+    //update(block);
     insert(block);
 }
 static inline MMBlock *split(MMBlock *block,uint16_t length){
@@ -179,10 +186,9 @@ static inline MMBlock *split(MMBlock *block,uint16_t length){
         panic("Bug > length %8d length %8d\n",length,block->length);
     }
     if(len >= MM_BLOCK_DOUBLE_BYTE){    /*! 如果剩于块大于 MM_BLOCK_DOUBLE_BYTE 插入空闲块 !*/
-        block->length = length;
-        update(block);
+        lblock(block,length);
         down = BLOCK_DOWN(block);
-        down->length = len;
+        down->length = len - LHEAD;
         insert(down);
     }
     return block;
@@ -190,8 +196,8 @@ static inline MMBlock *split(MMBlock *block,uint16_t length){
 
 void *zMalloc(uint16_t length){
     if(!length) return NULL;
-    length = ((length + sizeof(int32_t)) > sizeof(MMBlock) ? (length + sizeof(int32_t)) : sizeof(MMBlock)) >> 2;
-    uint16_t fix = bitindex(fixsize(length)) + 1;
+    length = length > MM_BLOCK_DOUBLE_BYTE << 2 ? (length) : MM_BLOCK_DOUBLE_BYTE;
+    uint16_t fix = bitindex(fixsize(length)) - 1;
     MMBlock *block;
 #ifdef  STATISTICS
     if(fix < MM_ALLOC_LG2) mmInfo.count[fix]++;
@@ -234,16 +240,11 @@ static void __exit(int req){
     longjmp(jmp,1);
 }
 static void *ptr[PS2] = {NULL};
-int main(int argc,char **argv){
-    (void)argc,(void)argv;
-    int n;
-    int nf = 0,ns = 0,nn = 0;
-    signal(SIGINT,__exit);
-    signal(SIGSEGV,__exit);
-    zMInit();
+
+static void randTest(void){
+    int n,nf = 0,ns = 0,nn = 0;
     srand(time(NULL));
     running = 1;
-    setjmp(jmp);
     while(running){
         n = rand() % (PS2) & 0xFFE0;
         if(ptr[n]){
@@ -260,6 +261,23 @@ int main(int argc,char **argv){
         }
     }
     printf("Debug> failed : %8d success : %8d free %8d\n",nf,ns,nn);
+}
+
+#if 0
+static void reTest(void){
+    int n;
+    while(scanf("%d",&n) != EOF){
+    }
+}
+#endif
+
+int main(int argc,char **argv){
+    (void)argc,(void)argv;
+    signal(SIGINT,__exit);
+    signal(SIGSEGV,__exit);
+    zMInit();
+    setjmp(jmp);
+    goto _test;
 #ifdef  STATISTICS
     for(int i = 0;i < MM_ALLOC_LG2;i++){
         printf("{%5d count %8d,unhit %8d}\n",1 << i,mmInfo.count[i],mmInfo.unhit[i]);
@@ -268,5 +286,8 @@ int main(int argc,char **argv){
     foreach();
 #endif
     return 0;
+_test:
+    randTest();
 }
 #endif
+
