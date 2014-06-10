@@ -34,6 +34,7 @@ static volatile int running = 0;
 
 const uint16_t CONST_HEAP[NR_HEAP] = {L1MAX,L2MAX};
 
+#pragma pack(1)
 typedef struct{
     uint32_t used:1;
     uint32_t length:15;
@@ -44,6 +45,7 @@ typedef struct{
         char ptr[0];
     };
 }MBlock;
+#pragma pack()
 
 struct{
     void     *heap[NR_HEAP];
@@ -212,6 +214,7 @@ static inline void *allocHeap(uint16_t length){
 
 void *zMalloc(uint16_t length){
     if(!length) return NULL;
+    length = (length + 3) & ~3;
     length = length > LBYTE(LMIN) ? length : LBYTE(LMIN);
     uint16_t fix = bitindex(fixsize(length)) - 1;
     length = LWORD(length) + LHEAD;
@@ -270,6 +273,7 @@ static void randTest(void){
             if(ptr[n] == NULL){
                 nf++;
             }else{
+                memset(ptr[n],0,n);
                 ns++;
                 an += n;
             }
