@@ -17,7 +17,9 @@ static volatile int running = 0;
 #define LLG2(x)         ((x) - LHEAD)
 #define LHEAD           LWORD(sizeof(uint32_t))
 #define LMIN            LWORD(sizeof(MBlock))
-#define LMAX            (26 * 1024)
+#define NR_HEAP         2
+#define L1MAX           (26 * 1024)
+#define L2MAX           (16 * 1024)
 #define PTR_ENTRY(ptr)  container_of(ptr,MBlock,ptr)
 #define LIST_ENTRY(lst) list_entry(lst,MBlock,list)
 #define BLOCK_DOWN(x)   ((void*)(x) + LBYTE((x)->length))
@@ -30,6 +32,7 @@ static volatile int running = 0;
 #define is_power_of_2(x)    (!((x) & (x -1 )))
 #define pow2(x) (1 << x)
 
+const uint16_t CONST_HEAP[NR_HEAP] = {L1MAX,L2MAX};
 
 typedef struct{
     uint32_t used:1;
@@ -43,8 +46,8 @@ typedef struct{
 }MBlock;
 
 struct{
-    void     *heap;
-    uint16_t hLength;
+    void     *heap[NR_HEAP];
+    uint16_t hLength[NR_HEAP];
     struct list_head head[M_ALLOC_LG2];
 #ifdef  STATISTICS
     int32_t scnt[M_ALLOC_LG2];
@@ -98,10 +101,18 @@ static inline MBlock* lblock(MBlock *block,uint16_t length){
     return down;
 }
 
+static inline int limit(MBlock *block){
+    for(int i = 0;i < NR_HEAP;i++){
+        if(block == thiz.heap[i])
+            return i;
+    }
+    return -1;
+}
+
 static inline MBlock *mergedown(MBlock *block){
     MBlock  *down;
     down = BLOCK_DOWN(block);
-    while(!down->used && (down != thiz.heap)){     /*! 堆上的内存不在空闲表里,不参与此次合并 !*/
+    while(-1 == limit(down) && !down->used){     /*! 堆上的内存不在空闲表里,不参与此次合并 !*/
         list_del(&down->list);
         down = lblock(block,block->length + down->length);
     }
@@ -127,13 +138,14 @@ static inline MBlock *merge(MBlock *block){
 static void insert(MBlock *block){
     int bit;
     uint16_t len,blen;
+    int i = 0;
     MBlock *down;
     if(block->length < LHEAD)
         panic("Bug> Insert invalid block\n");
     down = BLOCK_DOWN(block);
-    if(down == thiz.heap){ /*! 如果能放入堆,优先放入堆中 !*/
-        thiz.heap = block;
-        thiz.hLength += block->length;
+    if(-1 != (i = limit(down))){
+        thiz.heap[i] = block;
+        thiz.hLength[i] += block->length;
     }else{
         bit = bitindex(LLG2(block->length)) - 1;
         if(bit > M_ALLOC_LG2)
@@ -157,15 +169,17 @@ void zMInit(void){
         thiz.head[i] = (struct list_head)LIST_HEAD_INIT(thiz.head[i]);
     }
 #ifdef  TEST
-    block = malloc(LMAX);
+    for(int i = 0;i < NR_HEAP;i++){
+        block = malloc(CONST_HEAP[i]);
 #else
 #error "You should realize allocate memory"
 #endif
-    block->used = 1;
-    block->adjlength = 0;
-    block = lblock(block,1);
-    thiz.heap = block;
-    thiz.hLength = LWORD(LMAX) - 1;
+        block->used = 1;
+        block->adjlength = 0;
+        block = lblock(block,1);
+        thiz.heap[i] = block;
+        thiz.hLength[i] = LWORD(CONST_HEAP[i]) - 1;
+    }
 }
 
 static inline MBlock *split(MBlock *block,uint16_t length){
@@ -183,13 +197,15 @@ static inline MBlock *split(MBlock *block,uint16_t length){
 
 static inline void *allocHeap(uint16_t length){
     MBlock *block;
-    if(thiz.hLength >= length){
-        block = thiz.heap;
-        thiz.heap = ((void*)thiz.heap) + LBYTE(length);
-        thiz.hLength -= length;
-        block->used = 1;
-        lblock(block,length);
-        return block->ptr;
+    for(int i = 0;i < NR_HEAP;i++){
+        if(thiz.hLength[i] >= length){
+            block = thiz.heap[i];
+            thiz.heap[i] = (void*)thiz.heap[i] + LBYTE(length);
+            thiz.hLength[i] -= length;
+            block->used = 1;
+            lblock(block,length);
+            return block->ptr;
+        }
     }
     return NULL;
 }
@@ -291,7 +307,9 @@ int main(int argc,char **argv){
         printf("{%5d count %8d,unhit %8d}\n",1 << i,thiz.scnt[i],thiz.sunhit[i]);
     }
     printf("------------------------ Map -----------------------\n");
-    printf("<heap> => {%4d}\n",thiz.hLength);
+    for(int i = 0;i < NR_HEAP;i++){
+        printf("<heap %d> => {%4d}\n",i,thiz.hLength[i]);
+    }
     freemap();
 #endif
     return 0;
